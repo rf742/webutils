@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminal Dice</title>
+    <style>
+        /* Minimal Reset */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background-color: #0c0c0c; /* Deep black/grey */
+            color: #33ff00;            /* Classic terminal green */
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 18px;
+            padding: 20px;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* The scrolling history container */
+        #terminal-output {
+            flex-grow: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end; /* Keeps text at bottom */
+            white-space: pre-wrap;     /* Preserves formatting */
+            margin-bottom: 10px;
+        }
+
+        /* Scrollbar styling for Webkit */
+        #terminal-output::-webkit-scrollbar { width: 8px; }
+        #terminal-output::-webkit-scrollbar-thumb { background: #333; }
+
+        /* Input Line Container */
+        .input-line {
+            display: flex;
+            align-items: center;
+            border-top: 1px solid #333;
+            padding-top: 10px;
+        }
+
+        .prompt-char {
+            margin-right: 10px;
+            font-weight: bold;
+            user-select: none;
+        }
+
+        /* Invisible Input Styling */
+        input[type="text"] {
+            background: transparent;
+            border: none;
+            color: inherit;
+            font-family: inherit;
+            font-size: inherit;
+            flex-grow: 1;
+            outline: none;
+            caret-color: #33ff00; /* Green cursor */
+        }
+
+        /* Utility classes for the logs */
+        .log-entry { margin-bottom: 4px; line-height: 1.4; }
+        .log-command { opacity: 0.7; }
+        .log-result { font-weight: bold; color: #fff; } /* Results in white */
+        .log-error { color: #ff3333; } /* Red for errors */
+        .log-meta { color: #888; font-style: italic; font-size: 0.9em; } /* For kept dice info */
+    </style>
+</head>
+<body>
+
+    <div id="terminal-output">
+        <div class="log-entry">Terminal Dice v1.2.0</div>
+        <div class="log-entry">Commands: d20, 3d6+4, adv+2, dis-1, cls</div>
+        <div class="log-entry">-----------------------------------------</div>
+    </div>
+
+    <div class="input-line">
+        <span class="prompt-char">&gt;</span>
+        <input type="text" id="command-input" autocomplete="off" autofocus>
+    </div>
+
+    <script>
+        const input = document.getElementById('command-input');
+        const output = document.getElementById('terminal-output');
+
+        // Regex 1: Standard Dice (e.g., 3d6+2)
+        const REGEX_DICE = /^(\d*)d(\d*)([+-]\d+)?$/;
+        
+        // Regex 2: Advantage/Disadvantage (e.g., adv+5, dis)
+        const REGEX_ADV = /^(adv|dis)([+-]\d+)?$/;
+
+        // History State
+        let commandHistory = [];
+        let historyIndex = -1;
+
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                const rawCommand = input.value; 
+                const cleanCommand = rawCommand.trim(); 
+                
+                if (cleanCommand) {
+                    processCommand(rawCommand, cleanCommand);
+                    
+                    // Add to history
+                    commandHistory.push(rawCommand);
+                    historyIndex = commandHistory.length; 
+                    
+                    input.value = ''; 
+                    output.scrollTop = output.scrollHeight; 
+                }
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault(); 
+                if (historyIndex > 0) {
+                    historyIndex--;
+                    input.value = commandHistory[historyIndex];
+                }
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (historyIndex < commandHistory.length - 1) {
+                    historyIndex++;
+                    input.value = commandHistory[historyIndex];
+                } else {
+                    historyIndex = commandHistory.length;
+                    input.value = ''; 
+                }
+            }
+        });
+
+        document.addEventListener('click', () => input.focus());
+
+        function processCommand(displayCmd, rawCmd) {
+            // 0. Handle Clear Screen
+            if (['clear', 'cls'].includes(rawCmd.toLowerCase())) {
+                output.innerHTML = '';
+                return;
+            }
+
+            // Print the user's input
+            printToLog(`> ${displayCmd}`, 'log-command');
+
+            // Remove spaces for parsing
+            const nospaceCmd = rawCmd.replace(/\s+/g, '').toLowerCase();
+
+            // 1. Check Advantage/Disadvantage
+            const matchAdv = nospaceCmd.match(REGEX_ADV);
+            if (matchAdv) {
+                rollAdvantage(matchAdv[1], matchAdv[2]);
+                return;
+            }
+
+            // 2. Check Standard Dice
+            const matchDice = nospaceCmd.match(REGEX_DICE);
+            if (matchDice) {
+                rollStandard(matchDice);
+                return;
+            }
+
+            // 3. Invalid
+            printToLog('?', 'log-error');
+        }
+
+        function rollAdvantage(type, modifierStr) {
+            const r1 = Math.floor(Math.random() * 20) + 1;
+            const r2 = Math.floor(Math.random() * 20) + 1;
+            
+            const modifier = modifierStr ? parseInt(modifierStr) : 0;
+            const kept = type === 'adv' ? Math.max(r1, r2) : Math.min(r1, r2);
+            const total = kept + modifier;
+
+            const modText = modifier !== 0 ? (modifier > 0 ? ` + ${modifier}` : ` - ${Math.abs(modifier)}`) : '';
+            const typeText = type === 'adv' ? 'ADV' : 'DIS';
+            
+            // Format: [12, 4] (Keep 12) + 5 = 17
+            printToLog(`[${r1}, ${r2}] <span class="log-meta">(Keep ${kept})</span>${modText} = ${total}`, 'log-result');
+        }
+
+        function rollStandard(match) {
+            let count = match[1] === "" ? 1 : parseInt(match[1]);
+            let sides = match[2] === "" ? 6 : parseInt(match[2]);
+            let modifier = match[3] ? parseInt(match[3]) : 0;
+
+            if (count > 500 || sides < 1) {
+                printToLog('?', 'log-error');
+                return;
+            }
+
+            let rolls = [];
+            let sum = 0;
+            for (let i = 0; i < count; i++) {
+                const roll = Math.floor(Math.random() * sides) + 1;
+                rolls.push(roll);
+                sum += roll;
+            }
+
+            const total = sum + modifier;
+            const rollsStr = `[${rolls.join(', ')}]`;
+            const modStr = modifier !== 0 ? (modifier > 0 ? ` + ${modifier}` : ` - ${Math.abs(modifier)}`) : '';
+            
+            printToLog(`${rollsStr}${modStr} = ${total}`, 'log-result');
+        }
+
+        function printToLog(html, className) {
+            const div = document.createElement('div');
+            div.className = `log-entry ${className || ''}`;
+            div.innerHTML = html; // Changed to innerHTML to support the span in adv/dis
+            output.appendChild(div);
+        }
+    </script>
+</body>
+</html>
