@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCDA Decision Matrix Tool</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* Same Styling as before */
+        :root { --primary: #2563eb; --bg: #f8fafc; --card: #ffffff; --border: #e2e8f0; --text: #1e293b; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg); color: var(--text); max-width: 1200px; margin: 0 auto; padding: 20px; line-height: 1.5; }
+        header { margin-bottom: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 1rem; }
+        h1 { margin: 0; font-size: 1.5rem; }
+        p { color: #64748b; margin-top: 0.5rem; }
+        .controls { display: flex; gap: 1rem; margin-bottom: 1rem; align-items: center; }
+        button { background-color: var(--primary); color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-weight: 500; transition: background 0.2s; }
+        button:hover { background-color: #1d4ed8; }
+        button.secondary { background-color: #64748b; }
+        button.secondary:hover { background-color: #475569; }
+        button.danger { background-color: #ef4444; }
+        button.danger:hover { background-color: #dc2626; }
+        .matrix-container { overflow-x: auto; background: var(--card); padding: 1rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 2rem; }
+        table { border-collapse: collapse; width: 100%; min-width: 600px; }
+        th, td { padding: 0.75rem; border: 1px solid var(--border); text-align: center; }
+        th { background-color: #f1f5f9; }
+        input[type="text"], input[type="number"] { width: 100%; padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box; }
+        input.score-input { text-align: center; font-family: monospace; }
+        input.weight-input { width: 80px; text-align: center; display: inline-block; }
+        .header-input { font-weight: bold; text-align: center; }
+        .row-label { font-weight: bold; }
+        #results-section { display: none; gap: 2rem; flex-wrap: wrap; }
+        .results-card { background: var(--card); padding: 1.5rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); flex: 1; min-width: 300px; }
+        .chart-container { position: relative; height: 400px; width: 100%; }
+        ol.rank-list { padding-left: 1.5rem; margin: 0; }
+        ol.rank-list li { margin-bottom: 0.5rem; font-size: 1.1rem; }
+        .score-badge { background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 12px; font-size: 0.9em; margin-left: 10px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>MCDA Decision Matrix</h1>
+    <p>Define your criteria, assign weights, and score your options.</p>
+</header>
+
+<div class="controls">
+    <button class="secondary" onclick="addOption()">+ Add Option (Row)</button>
+    <button class="secondary" onclick="addCriteria()">+ Add Parameter (Col)</button>
+    <div style="flex-grow:1"></div>
+    <button class="danger" onclick="resetMatrix()">Reset</button>
+</div>
+
+<div class="matrix-container">
+    <table id="decisionMatrix">
+        <thead>
+            <tr id="header-names"><th>Options / Criteria</th></tr>
+            <tr id="header-weights"><th>Weights (1-10)</th></tr>
+        </thead>
+        <tbody id="matrix-body"></tbody>
+    </table>
+</div>
+
+<div style="text-align: center; margin-bottom: 2rem;">
+    <button onclick="calculate()" style="font-size: 1.2rem; padding: 0.75rem 2rem;">Run Analysis</button>
+</div>
+
+<div id="results-section">
+    <div class="results-card">
+        <h2>🏆 Rankings</h2>
+        <ol id="ranking-list" class="rank-list"></ol>
+    </div>
+    <div class="results-card" style="flex: 2;">
+        <h2>📊 Performance Breakdown</h2>
+        <div class="chart-container"><canvas id="resultsChart"></canvas></div>
+    </div>
+</div>
+
+<script>
+    // --- STATE MANAGEMENT (The "Brain") ---
+    // These variables hold the data. The HTML is just a reflection of this data.
+    let data = {
+        options: ['Option A', 'Option B'],
+        criteria: ['Cost', 'Quality', 'Speed'],
+        weights: [5, 8, 5],
+        // Scores is a 2D array: scores[rowIndex][colIndex]
+        scores: [
+            [0, 0, 0], // Scores for Option A
+            [0, 0, 0]  // Scores for Option B
+        ]
+    };
+
+    let chartInstance = null;
+
+    // Initialize
+    window.onload = function() { renderMatrix(); };
+
+    // --- RENDERING (The "View") ---
+    function renderMatrix() {
+        const headerNames = document.getElementById('header-names');
+        const headerWeights = document.getElementById('header-weights');
+        const tbody = document.getElementById('matrix-body');
+
+        // Reset HTML
+        headerNames.innerHTML = '<th>Options / Criteria</th>';
+        headerWeights.innerHTML = '<th>Weights (1-10)</th>';
+        tbody.innerHTML = '';
+
+        // 1. Render Criteria Columns
+        data.criteria.forEach((crit, cIdx) => {
+            // Header Name
+            let thName = document.createElement('th');
+            thName.innerHTML = `<input type="text" class="header-input" value="${crit}" oninput="updateCriteriaName(${cIdx}, this.value)">`;
+            headerNames.appendChild(thName);
+
+            // Header Weight
+            let thWeight = document.createElement('th');
+            thWeight.innerHTML = `<input type="number" class="weight-input" value="${data.weights[cIdx]}" min="1" step="0.1" oninput="updateWeight(${cIdx}, this.value)">`;
+            headerWeights.appendChild(thWeight);
+        });
+
+        // Add Delete Column Headers
+        headerNames.insertAdjacentHTML('beforeend', '<th style="width:50px">Action</th>');
+        headerWeights.insertAdjacentHTML('beforeend', '<th></th>');
+
+        // 2. Render Option Rows
+        data.options.forEach((opt, rIdx) => {
+            let tr = document.createElement('tr');
+            
+            // Option Name
+            let tdName = document.createElement('td');
+            tdName.innerHTML = `<input type="text" class="row-label" value="${opt}" oninput="updateOptionName(${rIdx}, this.value)">`;
+            tr.appendChild(tdName);
+
+            // Scores
+            data.criteria.forEach((_, cIdx) => {
+                let tdScore = document.createElement('td');
+                // Note: We pull the value directly from data.scores[rIdx][cIdx]
+                tdScore.innerHTML = `<input type="number" class="score-input" value="${data.scores[rIdx][cIdx]}" oninput="updateScore(${rIdx}, ${cIdx}, this.value)">`;
+                tr.appendChild(tdScore);
+            });
+
+            // Delete Button
+            let tdDel = document.createElement('td');
+            tdDel.innerHTML = `<button class="danger" style="padding: 0.25rem 0.5rem;" onclick="removeOption(${rIdx})">×</button>`;
+            tr.appendChild(tdDel);
+
+            tbody.appendChild(tr);
+        });
+    }
+
+    // --- DATA UPDATERS (Updating the "Brain") ---
+    
+    function updateOptionName(idx, val) { data.options[idx] = val; }
+    function updateCriteriaName(idx, val) { data.criteria[idx] = val; }
+    
+    function updateWeight(idx, val) { 
+        data.weights[idx] = parseFloat(val) || 0; 
+    }
+    
+    function updateScore(rIdx, cIdx, val) {
+        data.scores[rIdx][cIdx] = parseFloat(val) || 0;
+    }
+
+    // --- STRUCTURAL CHANGES (Adding/Removing) ---
+
+    function addOption() {
+        // Add name
+        data.options.push(`Option ${data.options.length + 1}`);
+        // Add a row of zeros (one for each criterion)
+        data.scores.push(new Array(data.criteria.length).fill(0));
+        renderMatrix();
+    }
+
+    function addCriteria() {
+        // Add name
+        data.criteria.push(`Crit ${data.criteria.length + 1}`);
+        // Add default weight
+        data.weights.push(1);
+        // Add a zero to every existing option row
+        data.scores.forEach(row => row.push(0));
+        renderMatrix();
+    }
+
+    function removeOption(idx) {
+        if(data.options.length <= 1) return alert("Keep at least one option.");
+        data.options.splice(idx, 1);
+        data.scores.splice(idx, 1);
+        renderMatrix();
+    }
+
+    function resetMatrix() {
+        if(confirm("Clear all data?")) {
+            data = {
+                options: ['Option A', 'Option B'],
+                criteria: ['Cost', 'Quality', 'Speed'],
+                weights: [5, 8, 5],
+                scores: [[0, 0, 0], [0, 0, 0]]
+            };
+            document.getElementById('results-section').style.display = 'none';
+            renderMatrix();
+        }
+    }
+
+    // --- CALCULATION ---
+
+    function calculate() {
+        let totalWeight = data.weights.reduce((a, b) => a + b, 0);
+        if(totalWeight === 0) return alert("Total weight cannot be zero");
+
+        let normalizedWeights = data.weights.map(w => w / totalWeight);
+        let results = [];
+
+        data.options.forEach((opt, rIdx) => {
+            let weightedBreakdown = [];
+            let totalScore = 0;
+
+            data.criteria.forEach((_, cIdx) => {
+                let rawScore = data.scores[rIdx][cIdx];
+                let contrib = rawScore * normalizedWeights[cIdx];
+                weightedBreakdown.push(contrib);
+                totalScore += contrib;
+            });
+
+            results.push({
+                name: opt,
+                total: totalScore,
+                breakdown: weightedBreakdown
+            });
+        });
+
+        results.sort((a, b) => b.total - a.total);
+        displayResults(results);
+    }
+
+    function displayResults(results) {
+        document.getElementById('results-section').style.display = 'flex';
+        const listEl = document.getElementById('ranking-list');
+        listEl.innerHTML = '';
+        
+        results.forEach(res => {
+            let li = document.createElement('li');
+            li.innerHTML = `${res.name} <span class="score-badge">${res.total.toFixed(2)}</span>`;
+            listEl.appendChild(li);
+        });
+
+        const ctx = document.getElementById('resultsChart').getContext('2d');
+        if(chartInstance) chartInstance.destroy();
+
+        let datasets = data.criteria.map((critName, cIdx) => {
+            return {
+                label: critName,
+                // Match the score to the sorted result's breakdown
+                data: results.map(r => r.breakdown[cIdx]), 
+                borderWidth: 1,
+                backgroundColor: `hsl(${(cIdx * 360) / data.criteria.length}, 70%, 60%)`,
+            };
+        });
+
+        chartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: { labels: results.map(r => r.name), datasets: datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }
+            }
+        });
+        
+        document.getElementById('results-section').scrollIntoView({behavior: "smooth"});
+    }
+</script>
+
+</body>
+</html>
